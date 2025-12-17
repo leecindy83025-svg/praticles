@@ -1026,3 +1026,338 @@
             
             // 获取目标形状的位置
             function getTargetPosition(index, total) {
+                let x = 0, y = 0, z = 0;
+                const time = Date.now() * 0.001;
+                
+                switch(targetShape) {
+                    case 'sphere':
+                        // 球体
+                        const radius = 4;
+                        const theta = Math.acos(2 * (index / total) - 1);
+                        const phi = Math.sqrt(total * Math.PI) * theta;
+                        
+                        x = radius * Math.sin(theta) * Math.cos(phi);
+                        y = radius * Math.sin(theta) * Math.sin(phi);
+                        z = radius * Math.cos(theta);
+                        break;
+                        
+                    case 'text':
+                        // 文字"我是Mok"的简化表示
+                        const textRadius = 5;
+                        const angle = (index / total) * Math.PI * 2;
+                        const textPattern = Math.sin(angle * 5) * 0.5 + 1;
+                        
+                        x = textRadius * Math.cos(angle) * textPattern;
+                        y = textRadius * Math.sin(angle) * textPattern;
+                        z = Math.sin(angle * 3) * 2;
+                        break;
+                        
+                    case 'ring':
+                        // 圆环
+                        const ringRadius = 4;
+                        const ringAngle = (index / total) * Math.PI * 2;
+                        
+                        x = ringRadius * Math.cos(ringAngle);
+                        y = ringRadius * Math.sin(ringAngle);
+                        z = Math.sin(ringAngle * 5) * 0.5;
+                        break;
+                        
+                    case 'star':
+                        // 星形
+                        const starRadius = 4;
+                        const starAngle = (index / total) * Math.PI * 2;
+                        const starPoints = 5;
+                        const starPattern = 1 + 0.3 * Math.sin(starAngle * starPoints);
+                        
+                        x = starRadius * Math.cos(starAngle) * starPattern;
+                        y = starRadius * Math.sin(starAngle) * starPattern;
+                        z = Math.cos(starAngle * 3) * 1.5;
+                        break;
+                        
+                    case 'heart':
+                        // 爱心
+                        const heartAngle = (index / total) * Math.PI * 2;
+                        const heartSize = 5;
+                        
+                        // 爱心参数方程
+                        const t = heartAngle;
+                        x = heartSize * 16 * Math.pow(Math.sin(t), 3);
+                        y = heartSize * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+                        z = Math.sin(t * 2) * 2;
+                        
+                        // 缩放和调整位置
+                        x *= 0.01;
+                        y *= 0.01;
+                        y -= 2;
+                        break;
+                        
+                    default:
+                        // 默认球体
+                        const defaultRadius = 4;
+                        const defaultTheta = Math.acos(2 * (index / total) - 1);
+                        const defaultPhi = Math.sqrt(total * Math.PI) * defaultTheta;
+                        
+                        x = defaultRadius * Math.sin(defaultTheta) * Math.cos(defaultPhi);
+                        y = defaultRadius * Math.sin(defaultTheta) * Math.sin(defaultPhi);
+                        z = defaultRadius * Math.cos(defaultTheta);
+                }
+                
+                // 添加一些动画效果
+                x += Math.sin(time * 0.5 + index * 0.01) * 0.1;
+                y += Math.cos(time * 0.3 + index * 0.01) * 0.1;
+                z += Math.sin(time * 0.7 + index * 0.01) * 0.1;
+                
+                return new THREE.Vector3(x, y, z);
+            }
+            
+            // 物理模拟更新
+            function updatePhysics() {
+                if (!particles || !particles.geometry.attributes.position) return;
+                
+                const positions = particles.geometry.attributes.position.array;
+                const attractionStrength = parseFloat(document.getElementById('attractionStrength').value);
+                const repulsionStrength = parseFloat(document.getElementById('repulsionStrength').value);
+                const damping = parseFloat(document.getElementById('damping').value);
+                const handInfluence = parseFloat(document.getElementById('handInfluence').value);
+                const stormStrength = parseFloat(document.getElementById('stormStrength').value);
+                
+                // 获取手部位置（如果检测到手）
+                let handPos = null;
+                if (handDetected && handMesh && handMesh.visible) {
+                    // 使用手腕位置（第一个关键点）
+                    const dummy = new THREE.Object3D();
+                    handMesh.getMatrixAt(0, dummy.matrix);
+                    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+                    handPos = dummy.position.clone();
+                }
+                
+                // 当前时间
+                const now = Date.now();
+                const explosionTime = (now - explosionStartTime) / 1000;
+                
+                // 爆炸过渡效果
+                let explosionForce = 0;
+                if (explosionActive && explosionTime < 1.0) {
+                    explosionForce = 10 * (1.0 - explosionTime);
+                } else {
+                    explosionActive = false;
+                }
+                
+                // 更新每个粒子（使用更高效的循环）
+                for (let i = 0; i < particleCount * 3; i += 3) {
+                    const idx = i / 3;
+                    
+                    // 获取当前位置
+                    const currentPos = new THREE.Vector3(
+                        positions[i],
+                        positions[i + 1],
+                        positions[i + 2]
+                    );
+                    
+                    // 获取目标位置
+                    const targetPos = getTargetPosition(idx, particleCount);
+                    
+                    // 计算吸引力（指向目标位置）
+                    const attraction = new THREE.Vector3()
+                        .subVectors(targetPos, currentPos)
+                        .multiplyScalar(attractionStrength);
+                    
+                    // 计算排斥力（简化版本，只考虑少量邻近粒子）
+                    let repulsion = new THREE.Vector3(0, 0, 0);
+                    if (idx % 10 === 0) { // 每10个粒子计算一次，优化性能
+                        const neighborIdx = (idx + 1) % particleCount;
+                        const neighborPos = new THREE.Vector3(
+                            positions[neighborIdx * 3],
+                            positions[neighborIdx * 3 + 1],
+                            positions[neighborIdx * 3 + 2]
+                        );
+                        
+                        const dist = currentPos.distanceTo(neighborPos);
+                        if (dist > 0 && dist < 0.5) {
+                            const repulseForce = new THREE.Vector3()
+                                .subVectors(currentPos, neighborPos)
+                                .normalize()
+                                .multiplyScalar(repulsionStrength / (dist * dist));
+                            repulsion.add(repulseForce);
+                        }
+                    }
+                    
+                    // 手部交互力
+                    let handForce = new THREE.Vector3(0, 0, 0);
+                    if (handPos) {
+                        const distToHand = currentPos.distanceTo(handPos);
+                        
+                        if (distToHand < handInfluence * 3) {
+                            // 手部排斥力
+                            const repulseFromHand = new THREE.Vector3()
+                                .subVectors(currentPos, handPos)
+                                .normalize()
+                                .multiplyScalar(repulsionStrength * 1.5 / (distToHand + 0.1));
+                            handForce.add(repulseFromHand);
+                            
+                            // 挥手风暴效果
+                            if (handSpeed > 1.0) {
+                                const stormForce = new THREE.Vector3(
+                                    Math.random() - 0.5,
+                                    Math.random() - 0.5,
+                                    Math.random() - 0.5
+                                ).normalize().multiplyScalar(handSpeed * stormStrength * 0.08);
+                                handForce.add(stormForce);
+                            }
+                        }
+                    }
+                    
+                    // 爆炸力
+                    let explosionVec = new THREE.Vector3(0, 0, 0);
+                    if (explosionForce > 0) {
+                        explosionVec = new THREE.Vector3(
+                            Math.random() - 0.5,
+                            Math.random() - 0.5,
+                            Math.random() - 0.5
+                        ).normalize().multiplyScalar(explosionForce);
+                    }
+                    
+                    // 计算总加速度
+                    particleAccelerations[i] = attraction.x + repulsion.x + handForce.x + explosionVec.x;
+                    particleAccelerations[i + 1] = attraction.y + repulsion.y + handForce.y + explosionVec.y;
+                    particleAccelerations[i + 2] = attraction.z + repulsion.z + handForce.z + explosionVec.z;
+                    
+                    // 更新速度：v = v + a
+                    particleVelocities[i] += particleAccelerations[i];
+                    particleVelocities[i + 1] += particleAccelerations[i + 1];
+                    particleVelocities[i + 2] += particleAccelerations[i + 2];
+                    
+                    // 应用阻尼
+                    particleVelocities[i] *= damping;
+                    particleVelocities[i + 1] *= damping;
+                    particleVelocities[i + 2] *= damping;
+                    
+                    // 更新位置：p = p + v
+                    positions[i] += particleVelocities[i];
+                    positions[i + 1] += particleVelocities[i + 1];
+                    positions[i + 2] += particleVelocities[i + 2];
+                }
+                
+                // 标记位置属性需要更新
+                particles.geometry.attributes.position.needsUpdate = true;
+                
+                // 根据手部大小调整粒子系统缩放（深度推拉）
+                if (handDetected && handSize > 0) {
+                    // 手部大小越大（手越靠近摄像头），粒子系统越小
+                    const targetScale = Math.max(0.5, Math.min(2.0, 1.5 - handSize * 5));
+                    particles.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+                } else {
+                    // 逐渐恢复到原始大小
+                    particles.scale.lerp(new THREE.Vector3(1, 1, 1), 0.05);
+                }
+            }
+            
+            // 动画循环
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                // 更新物理模拟
+                updatePhysics();
+                
+                // 更新相机位置（简单的自动旋转）
+                const time = Date.now() * 0.0005;
+                if (camera) {
+                    camera.position.x = Math.sin(time) * 12;
+                    camera.position.z = Math.cos(time) * 12;
+                    camera.lookAt(0, 0, 0);
+                }
+                
+                // 渲染场景
+                if (renderer && scene && camera) {
+                    renderer.render(scene, camera);
+                }
+                
+                // 更新FPS计数器
+                updateFPS();
+            }
+            
+            // 更新FPS计数器
+            function updateFPS() {
+                frameCount++;
+                const now = performance.now();
+                
+                if (now >= lastFpsUpdate + 1000) {
+                    fpsCounter = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+                    document.getElementById('fpsCounter').textContent = fpsCounter;
+                    frameCount = 0;
+                    lastFpsUpdate = now;
+                }
+            }
+            
+            // 窗口大小变化处理
+            function onWindowResize() {
+                const canvas = document.getElementById('arCanvas');
+                const width = canvas.parentElement.clientWidth;
+                const height = canvas.parentElement.clientHeight;
+                
+                if (camera && renderer) {
+                    camera.aspect = width / height;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(width, height);
+                }
+            }
+            
+            // 初始化函数
+            async function init() {
+                try {
+                    // 初始化Three.js
+                    initThreeJS();
+                    
+                    // 初始化MediaPipe Hands
+                    await initMediaPipe();
+                    
+                    // 开始动画循环
+                    animate();
+                    
+                    // 隐藏加载界面
+                    setTimeout(() => {
+                        const loadingScreen = document.getElementById('loadingScreen');
+                        if (loadingScreen) {
+                            loadingScreen.classList.add('hidden');
+                        }
+                    }, 2000);
+                    
+                } catch (error) {
+                    console.error('初始化失败:', error);
+                    document.getElementById('detectionStatus').textContent = '初始化失败';
+                    
+                    // 无论如何都启动动画循环
+                    animate();
+                    
+                    // 隐藏加载界面
+                    setTimeout(() => {
+                        const loadingScreen = document.getElementById('loadingScreen');
+                        if (loadingScreen) {
+                            loadingScreen.classList.add('hidden');
+                        }
+                    }, 1000);
+                }
+            }
+            
+            // 页面加载完成后初始化
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+            
+            // 导出全局变量（仅用于调试）
+            window.ParticleSystem = {
+                scene,
+                camera,
+                renderer,
+                particles,
+                currentGesture,
+                targetShape,
+                handSpeed
+            };
+            
+        })(); // 立即执行函数结束
+    </script>
+</body>
+</html>
